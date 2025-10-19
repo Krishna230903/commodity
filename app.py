@@ -1,6 +1,9 @@
 """
 Complete Project: India's Commodity Price History (All-in-One)
 
+V1.1: Fixed Streamlit UnhashableParamError by adding an underscore
+to the '_create_mock_func' argument in 'load_or_create_data'.
+
 This single file contains all three parts of the project:
 1.  Part 1: Data Pipeline (Data loading and cleaning functions)
 2.  Part 2: Analysis Engine (Plotting functions for case studies)
@@ -44,7 +47,7 @@ def setup_directories():
             print(f"Created directory: {dir_path}")
 
 @st.cache_data  # Use Streamlit's cache for data loading
-def load_or_create_data(clean_file, raw_file_info, create_mock_func):
+def load_or_create_data(clean_file, raw_file_info, _create_mock_func): # <-- FIX 1: Added underscore
     """
     Helper function: Tries to load clean CSV.
     If fails, it tries to load raw files.
@@ -59,12 +62,12 @@ def load_or_create_data(clean_file, raw_file_info, create_mock_func):
             if df.empty:
                 print(f"WARNING: Clean file {clean_file} is empty. Re-processing...")
                 os.remove(clean_file_path)
-                return load_or_create_data(clean_file, raw_file_info, create_mock_func)
+                return load_or_create_data(clean_file, raw_file_info, _create_mock_func)
             return df
         except EmptyDataError:
             print(f"ERROR: {clean_file} is empty. Deleting and re-processing...")
             os.remove(clean_file_path)
-            return load_or_create_data(clean_file, raw_file_info, create_mock_func)
+            return load_or_create_data(clean_file, raw_file_info, _create_mock_func)
     else:
         # --- Try to load from raw files (TEMPLATE) ---
         try:
@@ -80,12 +83,13 @@ def load_or_create_data(clean_file, raw_file_info, create_mock_func):
         
         except (FileNotFoundError, NotImplementedError):
             print(f"Raw file not found or processing not implemented. Creating mock data for {clean_file}.")
-            df = create_mock_func()
+            df = _create_mock_func() # <-- FIX 2: Call the underscore-prefixed variable
             df.to_csv(clean_file_path)
             print(f"Clean mock data saved to {clean_file_path}")
             return df
 
 # --- Mock Data Creation Functions ---
+# (These don't need caching, as they are called by the cached function)
 
 def create_mock_forex():
     mock_data = """
@@ -110,8 +114,11 @@ Date,Price_per_10g_INR
 2008-09-15,14500
 2009-01-01,15000
 2010-01-01,18500
-2.
-    """
+2016-01-01,26000
+2016-11-08,30500
+2016-11-09,31800
+2017-01-01,29000
+"""
     df = pd.read_csv(io.StringIO(mock_data), parse_dates=True, index_col='Date')
     return df
 
@@ -362,6 +369,9 @@ st.markdown("""
 This project analyzes how the impact of global and domestic crises on Indian commodity 
 prices has fundamentally changed, splitting India's modern history into two distinct eras.
 """)
+
+# --- Run Setup ---
+setup_directories()
 
 # --- 3. Main Page Navigation (Using Tabs) ---
 tab1, tab2, tab3 = st.tabs([
