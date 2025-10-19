@@ -1,216 +1,346 @@
 """
-Part 1: The Data Pipeline (Acquisition & Cleaning)
+PROJECT ENGINE (Combines Part 1 and Part 2)
 
-This script:
-1.  Creates an output directory for clean data.
-2.  Defines a separate function for each data source.
-3.  Loads data (either from a direct URL or a local file).
-4.  Cleans and standardizes the data (dates, numbers).
-5.  Saves the clean data to a new CSV file in the 'clean_data/' folder.
+Part 1: The Data Pipeline
+- Functions to load, clean, and cache data.
+- Data is either loaded from a raw file/URL or from a pre-cleaned file.
+- All functions return a clean pandas DataFrame.
 
-You must manually download the required files and place them
-in a 'data/' folder, then update the file paths in this script.
+Part 2: The Analysis Engine
+- Functions to generate specific plots for our case studies.
+- Each plot function calls the necessary data functions from Part 1.
+- Each plot function returns a 'matplotlib.figure.Figure' object,
+  ready for Part 3 (Streamlit).
+
+MOCK DATA is used in this file so it can run immediately
+without any manual downloads. You can replace the 'else'
+blocks in the Part 1 functions with your real file-loading code.
 """
 
 import pandas as pd
 import os
-import openpyxl  # Required for pandas to read .xlsx files
+import io  # Used for reading string-based mock data
+import openpyxl  # Required for pandas
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import seaborn as sns
 
 # --- Global Settings ---
-# This is where your new clean files will be saved.
 CLEAN_DATA_DIR = "clean_data"
-# This is where you should save your manually downloaded raw files.
 RAW_DATA_DIR = "data"
 
 
 def setup_directories():
-    """Creates the 'clean_data' directory if it doesn't exist."""
+    """Creates 'clean_data' and 'data' directories if they don't exist."""
     if not os.path.exists(CLEAN_DATA_DIR):
         os.makedirs(CLEAN_DATA_DIR)
         print(f"Created directory: {CLEAN_DATA_DIR}")
+    if not os.path.exists(RAW_DATA_DIR):
+        os.makedirs(RAW_DATA_DIR)
+        print(f"Created directory: {RAW_DATA_DIR}")
 
-# --- Data Loading Functions ---
 
-def load_and_clean_wpi():
-    """
-    Fetches WPI (Wholesale Price Index) data.
-    This is a REAL, WORKING EXAMPLE of a direct URL import.
-    """
-    print("Processing WPI data...")
-    # This is a real, live URL from data.gov.in (WPI 2011-12 Series)
-    # This shows the "direct import" method.
-    url = "https://data.gov.in/files/ogdpv2dms/s3fs-public/Wholesale_Price_Index__WPI___New_Series__2011-12__Monthly_1_0_0.csv"
-    
-    try:
-        df = pd.read_csv(url)
-        
-        # --- Start Cleaning ---
-        # 1. Convert date column to datetime objects
-        # The format 'Jan-12' is '%b-%y' (Abbreviated month-short year)
-        df['Date'] = pd.to_datetime(df['Month-Year'], format='%b-%y')
-        
-        # 2. Select only the columns we need for the project
-        # (Example: We want Food, Fuel, and Manufactured Products)
-        df_clean = df[['Date', 'Food Articles', 'Fuel & Power', 'Manufactured Products']]
-        
-        # 3. Set the new 'Date' column as the index
-        df_clean = df_clean.set_index('Date')
-        
-        # 4. Save the clean file
-        save_path = os.path.join(CLEAN_DATA_DIR, 'clean_wpi_2011_present.csv')
-        df_clean.to_csv(save_path)
-        print(f"SUCCESS: WPI data saved to {save_path}\n")
-        
-    except Exception as e:
-        print(f"ERROR: Could not download or process WPI data from URL.")
-        print(f"{e}\n")
+# ==============================================================================
+# --- PART 1: DATA PIPELINE FUNCTIONS ---
+# ==============================================================================
 
-def load_and_clean_forex_reserves():
+def get_forex_reserves():
     """
+    Part 1 function for 1991 Crisis.
     Loads and cleans RBI Foreign Exchange Reserves data.
-    This is a TEMPLATE for a MANUALLY DOWNLOADED file.
+    Tries to load 'clean_forex_reserves.csv' first.
+    If not found, it generates and saves mock data.
     """
-    print("Processing RBI Forex Reserves data...")
-    # You must download this file from the RBI website (DBIE portal)
-    # and save it in your 'data/' folder.
-    local_file_path = os.path.join(RAW_DATA_DIR, "rbi_forex_data.xlsx") 
+    clean_file_path = os.path.join(CLEAN_DATA_DIR, 'clean_forex_reserves.csv')
 
-    try:
-        # RBI files often have many header rows. 'skiprows' is your best friend.
-        # You MUST open your Excel file and see how many rows to skip.
-        df = pd.read_excel(local_file_path, skiprows=5)
-        
-        # --- Start Cleaning ---
-        # This part is a GUESS. You must inspect your file and adapt.
-        
-        # 1. Rename messy columns
-        df = df.rename(columns={
-            'Month / Year': 'Date_Str',
-            'Total Reserves (USD Million)': 'Forex_USD_Million' 
-            # Add other columns you need
-        })
-        
-        # 2. Convert date column
-        # The format might be '2023 Apr' (%Y %b)
-        df['Date'] = pd.to_datetime(df['Date_Str'], format='%Y %b')
-        
-        # 3. Clean number column (remove 'NA', '-', etc.)
-        df['Forex_USD_Million'] = pd.to_numeric(df['Forex_USD_Million'], errors='coerce')
-        
-        # 4. Select, index, and save
-        df_clean = df[['Date', 'Forex_USD_Million']].set_index('Date')
-        
-        save_path = os.path.join(CLEAN_DATA_DIR, 'clean_forex_reserves.csv')
-        df_clean.to_csv(save_path)
-        print(f"SUCCESS: Forex Reserves data saved to {save_path}\n")
+    if os.path.exists(clean_file_path):
+        # If clean file exists, load it (fast path)
+        print("Loading cached Forex data...")
+        df = pd.read_csv(clean_file_path, parse_dates=True, index_col='Date')
+        return df
+    else:
+        # --- Create Mock Data (Replace this block with your real file loading) ---
+        print("Creating mock Forex data...")
+        mock_data_csv = """
+Date_Str,Forex_USD_Million
+1988-01-01,5400
+1988-07-01,5100
+1989-01-01,4500
+1989-07-01,4200
+1990-01-01,4000
+1990-07-01,3500
+1990-08-01,2800
+1991-01-01,2100
+1991-06-01,1100
+1991-07-01,1200
+1991-12-01,3500
+1992-07-01,5000
+1993-01-01,6000
+"""
+        df = pd.read_csv(io.StringIO(mock_data_csv))
+        df['Date'] = pd.to_datetime(df['Date_Str'])
+        df = df[['Date', 'Forex_USD_Million']].set_index('Date')
+        # --- End Mock Data Block ---
 
-    except FileNotFoundError:
-        print(f"ERROR: File not found: {local_file_path}")
-        print("Please download the RBI Forex data, save it to your 'data/' folder, and update the path.\n")
-    except Exception as e:
-        print(f"ERROR: Could not process RBI file. Check your 'skiprows' and column names.")
-        print(f"{e}\n")
+        # Save the clean data for next time
+        df.to_csv(clean_file_path)
+        print(f"Clean Forex data saved to {clean_file_path}")
+        return df
 
-def load_and_clean_gold_prices():
+
+def get_historical_gold_prices():
     """
-    Loads and cleans historical Gold prices (1947-present).
-    This is a TEMPLATE for a MANUALLY DOWNLOADED file.
+    Part 1 function for 2008 Crisis.
+    Loads and cleans historical Gold prices.
+    Tries to load 'clean_gold_prices.csv' first.
+    If not found, it generates and saves mock data.
     """
-    print("Processing historical Gold prices...")
-    # You will likely find this data on a financial site,
-    # copy it to Excel, and save it as a CSV.
-    local_file_path = os.path.join(RAW_DATA_DIR, "historical_gold_inr.csv")
+    clean_file_path = os.path.join(CLEAN_DATA_DIR, 'clean_gold_prices.csv')
 
-    try:
-        df = pd.read_csv(local_file_path)
-        
-        # --- Start Cleaning (Assuming columns 'Year' and 'Price_per_10g_INR') ---
-        # 1. Convert date
+    if os.path.exists(clean_file_path):
+        print("Loading cached Gold data...")
+        df = pd.read_csv(clean_file_path, parse_dates=True, index_col='Date')
+        return df
+    else:
+        # --- Create Mock Data (Replace with your real file) ---
+        print("Creating mock Gold data...")
+        mock_data_csv = """
+Year,Price_per_10g_INR
+2005,7000
+2006,8500
+2007,10800
+2008,12500
+2009,14500
+2010,18500
+2011,26400
+"""
+        df = pd.read_csv(io.StringIO(mock_data_csv))
         df['Date'] = pd.to_datetime(df['Year'], format='%Y')
+        df['Price_per_10g_INR'] = pd.to_numeric(df['Price_per_10g_INR'])
+        df = df[['Date', 'Price_per_10g_INR']].set_index('Date')
+        # --- End Mock Data Block ---
         
-        # 2. Clean numbers
-        # Remove '₹' and ',' characters before converting to numeric
-        df['Price_per_10g_INR'] = df['Price_per_10g_INR'].astype(str).str.replace('₹', '').str.replace(',', '')
-        df['Price_per_10g_INR'] = pd.to_numeric(df['Price_per_10g_INR'], errors='coerce')
-        
-        # 3. Select, index, and save
-        df_clean = df[['Date', 'Price_per_10g_INR']].set_index('Date')
-        
-        save_path = os.path.join(CLEAN_DATA_DIR, 'clean_gold_prices.csv')
-        df_clean.to_csv(save_path)
-        print(f"SUCCESS: Gold price data saved to {save_path}\n")
+        df.to_csv(clean_file_path)
+        print(f"Clean Gold data saved to {clean_file_path}")
+        return df
 
-    except FileNotFoundError:
-        print(f"ERROR: File not found: {local_file_path}")
-        print("Please find historical gold prices, save it as a CSV in 'data/', and update the path.\n")
-    except Exception as e:
-        print(f"ERROR: Could not process Gold file. Check your column names ('Year', 'Price_per_10g_INR').")
-        print(f"{e}\n")
-
-def load_and_clean_mcx_oil():
+def get_mcx_oil_and_inr():
     """
-    Loads and cleans MCX Crude Oil prices.
-    This is a TEMPLATE for a MANUALLY DOWNLOADED file from MCX.
+    Part 1 function for 2022 Crisis.
+    Loads and cleans MCX Crude Oil and USD/INR data.
+    Generates mock data for this combined case.
     """
-    print("Processing MCX Crude Oil data...")
-    # You must go to the MCX website, use their chart,
-    # and "Download CSV" for the commodity and date range.
-    local_file_path = os.path.join(RAW_DATA_DIR, "mcx_crude_oil_daily.csv")
-
-    try:
-        # MCX/NCDEX files are often well-formatted
-        df = pd.read_csv(local_file_path)
-        
-        # --- Start Cleaning ---
-        # 1. Convert date
+    clean_file_path = os.path.join(CLEAN_DATA_DIR, 'clean_oil_and_inr.csv')
+    
+    if os.path.exists(clean_file_path):
+        print("Loading cached Oil & INR data...")
+        df = pd.read_csv(clean_file_path, parse_dates=True, index_col='Date')
+        return df
+    else:
+        # --- Create Mock Data (Replace with your real files) ---
+        print("Creating mock Oil & INR data...")
+        mock_data_csv = """
+Date,Brent_USD,USD_INR
+2021-12-01,74.8
+2022-01-01,86.5,74.5
+2022-02-01,97.1,75.0
+2022-03-01,117.2,76.0
+2022-04-01,105.0,76.2
+2022-05-01,113.0,77.0
+2022-06-01,122.7,78.0
+2022-07-01,107.0,79.5
+"""
+        df = pd.read_csv(io.StringIO(mock_data_csv))
         df['Date'] = pd.to_datetime(df['Date'])
         
-        # 2. Select, index, and save
-        # We keep Open, High, Low, Close for potential candlestick charts
-        df_clean = df[['Date', 'Open', 'High', 'Low', 'Close']]
-        df_clean = df_clean.set_index('Date')
+        # --- This is the key analysis step ---
+        df['Brent_in_INR'] = df['Brent_USD'] * df['USD_INR']
         
-        save_path = os.path.join(CLEAN_DATA_DIR, 'clean_mcx_oil_daily.csv')
-        df_clean.to_csv(save_path)
-        print(f"SUCCESS: MCX Crude Oil data saved to {save_path}\n")
+        df = df.set_index('Date')
+        # --- End Mock Data Block ---
         
-    except FileNotFoundError:
-        print(f"ERROR: File not found: {local_file_path}")
-        print("Please download daily Crude Oil data from MCX, save it in 'data/', and update the path.\n")
-    except Exception as e:
-        print(f"ERROR: Could not process MCX file. Check your column names.")
-        print(f"{e}\n")
+        df.to_csv(clean_file_path)
+        print(f"Clean Oil & INR data saved to {clean_file_path}")
+        return df
 
-# --- Main Pipeline Runner ---
 
-def main():
-    """Runs the entire Part 1 data pipeline."""
-    print("--- [Part 1] Starting Data Acquisition & Cleaning Pipeline ---")
-    
-    # 1. Create the 'clean_data/' directory
-    setup_directories()
-    
-    # 2. Run each processing function
-    # We will run them all, and they will print their own success/error messages.
-    
-    # Example 1: Direct URL download
-    load_and_clean_wpi()
-    
-    # Example 2: Manual Excel download (e.g., from RBI)
-    load_and_clean_forex_reserves()
-    
-    # Example 3: Manual CSV download (e.g., from a financial blog)
-    load_and_clean_gold_prices()
-    
-    # Example 4: Manual CSV download (e.g., from MCX)
-    load_and_clean_mcx_oil()
-    
-    # --- Add more functions for your other data here ---
-    # e.g., load_and_clean_msp_data()
-    # e.g., load_and_clean_ppac_petrol_prices()
-    
-    print("--- [Part 1] Pipeline Finished. Check 'clean_data/' folder. ---")
+# ==============================================================================
+# --- PART 2: ANALYSIS & VISUALIZATION FUNCTIONS ---
+# ==============================================================================
 
+def plot_1991_bop_crisis():
+    """
+    Part 2 function.
+    Generates the chart for the 1991 Balance of Payments Crisis.
+    Calls get_forex_reserves() to get its data.
+    """
+    print("Generating 1991 BoP Crisis plot...")
+    
+    # 1. Get Data
+    df = get_forex_reserves()
+    # Filter for the crisis period
+    df_crisis = df.loc['1988-01-01':'1993-01-01']
+
+    # 2. Create Plot
+    sns.set_style("darkgrid")
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    sns.lineplot(
+        x=df_crisis.index,
+        y=df_crisis['Forex_USD_Million'],
+        ax=ax,
+        color='red',
+        linewidth=2.5
+    )
+
+    # 3. Add Annotations (The Story)
+    crisis_point = pd.to_datetime('1990-08-01') # Iraq invades Kuwait (Oil spike)
+    low_point = pd.to_datetime('1991-06-01')    # India pledges gold
+    
+    ax.axvline(crisis_point, color='black', linestyle='--', label='1990 Gulf War (Oil Spike)')
+    ax.axvline(low_point, color='gold', linestyle='--', label='1991 India Pledges Gold')
+    
+    ax.annotate(
+        "Gulf War Begins\nOil Prices Spike",
+        xy=(crisis_point, df_crisis.loc[crisis_point]['Forex_USD_Million']),
+        xytext=(crisis_point + pd.DateOffset(months=6), 4000),
+        arrowprops=dict(facecolor='black', shrink=0.05),
+        ha='center'
+    )
+    
+    # 4. Professional Styling
+    ax.set_title("The 1991 Balance of Payments Crisis", fontsize=18)
+    ax.set_xlabel("Year", fontsize=12)
+    ax.set_ylabel("Foreign Exchange Reserves (in Million USD)", fontsize=12)
+    ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('${x:,.0f}M'))
+    ax.legend()
+    
+    plt.tight_layout()
+    return fig
+
+
+def plot_2008_financial_crisis_gold():
+    """
+    Part 2 function.
+    Generates the "flight to safety" chart for Gold in 2008.
+    Calls get_historical_gold_prices() to get its data.
+    """
+    print("Generating 2008 Gold 'Flight to Safety' plot...")
+
+    # 1. Get Data
+    df = get_historical_gold_prices()
+    df_crisis = df.loc['2005-01-01':'2011-01-01']
+
+    # 2. Create Plot
+    sns.set_style("darkgrid")
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    sns.lineplot(
+        x=df_crisis.index,
+        y=df_crisis['Price_per_10g_INR'],
+        ax=ax,
+        color='gold',
+        linewidth=2.5,
+        marker='o'
+    )
+    
+    # 3. Add Annotations
+    crisis_point = pd.to_datetime('2008-09-15') # Lehman Brothers collapse
+    
+    ax.axvline(crisis_point, color='red', linestyle='--', label='2008 Financial Crisis')
+    
+    ax.annotate(
+        "Lehman Brothers Collapse\nInvestors 'Flight to Safety'",
+        xy=(crisis_point, df_crisis.loc['2008-01-01']['Price_per_10g_INR']),
+        xytext=(crisis_point - pd.DateOffset(years=1), 16000),
+        arrowprops=dict(facecolor='black', shrink=0.05),
+        ha='center'
+    )
+
+    # 4. Professional Styling
+    ax.set_title("Gold Price (INR) During 2008 Financial Crisis", fontsize=18)
+    ax.set_xlabel("Year", fontsize=12)
+    ax.set_ylabel("Price per 10g (in ₹)", fontsize=12)
+    ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
+    ax.legend()
+    
+    plt.tight_layout()
+    return fig
+
+
+def plot_2022_oil_shock():
+    """
+    Part 2 function.
+    Generates the chart for the 2022 Russia-Ukraine War.
+    Shows Brent (USD) vs. Brent (INR).
+    """
+    print("Generating 2022 Oil Shock plot...")
+    
+    # 1. Get Data
+    df = get_mcx_oil_and_inr()
+    df_crisis = df.loc['2021-12-01':'2022-07-01']
+
+    # 2. Create Plot (two y-axes)
+    sns.set_style("darkgrid")
+    fig, ax1 = plt.subplots(figsize=(12, 7))
+    
+    # Axis 1: Brent in USD
+    sns.lineplot(data=df_crisis, x=df_crisis.index, y='Brent_USD',
+                 ax=ax1, color='blue', label='Brent Crude (USD)', marker='o')
+    ax1.set_xlabel("Date", fontsize=12)
+    ax1.set_ylabel("Price per Barrel (in $)", fontsize=12, color='blue')
+    ax1.yaxis.set_major_formatter(mticker.StrMethodFormatter('${x:,.0f}'))
+    
+    # Axis 2: Brent in INR
+    ax2 = ax1.twinx()
+    sns.lineplot(data=df_crisis, x=df_crisis.index, y='Brent_in_INR',
+                 ax=ax2, color='green', label='Brent Crude (INR)', marker='o')
+    ax2.set_ylabel("Price per Barrel (in ₹)", fontsize=12, color='green')
+    ax2.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
+
+    # 3. Add Annotations
+    crisis_point = pd.to_datetime('2022-02-24') # Russia-Ukraine War
+    ax1.axvline(crisis_point, color='red', linestyle='--', label='Russia-Ukraine War')
+    
+    # 4. Professional Styling
+    fig.suptitle("Impact of 2022 War on Oil Price (USD vs. INR)", fontsize=18)
+    fig.legend(loc='upper left', bbox_to_anchor=(0.1, 0.9))
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for suptitle
+    
+    return fig
+
+
+# ==============================================================================
+# --- MAIN EXECUTION BLOCK (FOR TESTING) ---
+# ==============================================================================
 
 if __name__ == "__main__":
-    main()
+    """
+    This block runs ONLY when you execute this file directly.
+    It will first run the Part 1 pipeline to create the clean files.
+    Then, it will test each Part 2 plot function and show you the chart.
+    """
+    print("--- [Part 1 & 2] Running Project Engine as a Test ---")
+    
+    # 1. Setup
+    setup_directories()
+
+    # 2. Test Plot 1
+    print("\n--- Testing Plot 1: 1991 BoP Crisis ---")
+    fig1 = plot_1991_bop_crisis()
+    print("Plot 1 generated. Showing now...")
+    plt.show() # This will display the first plot
+
+    # 3. Test Plot 2
+    print("\n--- Testing Plot 2: 2008 Gold Crisis ---")
+    fig2 = plot_2008_financial_crisis_gold()
+    print("Plot 2 generated. Showing now...")
+    plt.show() # This will display the second plot
+
+    # 4. Test Plot 3
+    print("\n--- Testing Plot 3: 2022 Oil Shock ---")
+    fig3 = plot_2022_oil_shock()
+    print("Plot 3 generated. Showing now...")
+    plt.show() # This will display the third plot
+
+    print("\n--- [Part 1 & 2] All tests complete. ---")
