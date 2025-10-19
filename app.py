@@ -1,8 +1,9 @@
 """
 Complete Project: India's Commodity Price History (All-in-One)
 
-V1.2: Fixed KeyError: 'file' by handling the multi-file case
-      in get_oil_petrol_inr_data directly, bypassing the helper.
+V1.3: Fixed matplotlib ConversionError by explicitly converting
+      Timestamps to matplotlib's date numbers before using axvline.
+      Also added explicit date formatting for the x-axis.
 
 This single file contains all three parts of the project:
 1.  Part 1: Data Pipeline (Data loading and cleaning functions)
@@ -26,6 +27,7 @@ import io
 import openpyxl  # Required for pandas to read .xlsx
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+import matplotlib.dates as mdates # <-- IMPORT ADDED
 import seaborn as sns
 
 # ==============================================================================
@@ -62,6 +64,8 @@ def load_or_create_data(clean_file, raw_file_info, _create_mock_func):
             if df.empty:
                 print(f"WARNING: Clean file {clean_file} is empty. Re-processing...")
                 os.remove(clean_file_path)
+                # Use st.rerun() if in Streamlit context, otherwise recursive call needs care
+                # For simplicity in this structure, we'll stick to the recursive pattern
                 return load_or_create_data(clean_file, raw_file_info, _create_mock_func)
             return df
         except EmptyDataError:
@@ -74,13 +78,12 @@ def load_or_create_data(clean_file, raw_file_info, _create_mock_func):
             # Check if 'file' key exists, otherwise skip to mock
             if 'file' not in raw_file_info:
                  raise FileNotFoundError("Raw file info doesn't contain 'file' key")
-                 
+
             raw_path = os.path.join(RAW_DATA_DIR, raw_file_info['file'])
             if not os.path.exists(raw_path):
                 raise FileNotFoundError(f"File not found: {raw_path}")
 
             print(f"Processing raw file: {raw_path}")
-            # --- YOUR REAL DATA LOADING & CLEANING CODE FOR SINGLE FILES ---
             # Determine file type and load accordingly
             skiprows = raw_file_info.get('skiprows', 0) # Use get for optional keys
             if raw_path.endswith('.csv'):
@@ -91,34 +94,44 @@ def load_or_create_data(clean_file, raw_file_info, _create_mock_func):
                  raise ValueError("Unsupported raw file type")
 
             # --- Apply cleaning specific to the file type ---
-            # This part still needs customization based on the actual file structure
-            # Example (you MUST adapt this based on your actual raw files):
+            # This part needs customization based on the actual file structure
             if 'rbi_forex' in raw_file_info['file']:
                  df_raw = df_raw.rename(columns={'Month / Year': 'Date_Str', 'Total Reserves (USD Million)': 'Value'})
-                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], format='%Y %b')
-                 df_raw['Value'] = pd.to_numeric(df_raw['Value'], errors='coerce')
+                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], errors='coerce') # Coerce errors
             elif 'historical_gold' in raw_file_info['file']:
                  df_raw = df_raw.rename(columns={'Year': 'Date_Str', 'Price_per_10g_INR': 'Value'})
-                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], format='%Y')
+                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], format='%Y', errors='coerce')
                  df_raw['Value'] = df_raw['Value'].astype(str).str.replace('₹', '').str.replace(',', '')
-                 df_raw['Value'] = pd.to_numeric(df_raw['Value'], errors='coerce')
             elif 'mcx_copper' in raw_file_info['file']:
+                 # Assuming standard MCX CSV format
                  df_raw = df_raw.rename(columns={'Date': 'Date_Str', 'Close': 'Value'})
-                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'])
-                 df_raw['Value'] = pd.to_numeric(df_raw['Value'], errors='coerce')
+                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], errors='coerce')
             elif 'wpi_vegetables' in raw_file_info['file']:
-                 df_raw = df_raw.rename(columns={'Month-Year': 'Date_Str', 'Vegetables': 'Value'}) # Assuming 'Vegetables' column
-                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], format='%b-%y')
-                 df_raw['Value'] = pd.to_numeric(df_raw['Value'], errors='coerce')
+                 df_raw = df_raw.rename(columns={'Month-Year': 'Date_Str', 'Vegetables': 'Value'}) # Adjust col name if needed
+                 df_raw['Date'] = pd.to_datetime(df_raw['Date_Str'], format='%b-%y', errors='coerce')
             else:
                  print(f"Warning: No specific cleaning logic for {raw_file_info['file']}")
-                 # Add generic cleaning if needed, or raise error
-                 return None # Or handle appropriately
+                 # Add generic cleaning or return None/raise error
+                 # Assuming a generic structure for unknown files:
+                 if 'Date' not in df_raw.columns or 'Value' not in df_raw.columns:
+                     print("Error: Unknown file structure lacks 'Date' or 'Value' column.")
+                     return None
+                 df_raw['Date'] = pd.to_datetime(df_raw['Date'], errors='coerce')
 
-            df_clean = df_raw[['Date', 'Value']].set_index('Date').dropna()
+            # Generic value cleaning after column identification
+            if 'Value' in df_raw.columns:
+                 df_raw['Value'] = pd.to_numeric(df_raw['Value'], errors='coerce')
+            else:
+                print(f"Error: Could not find 'Value' column after renaming for {raw_file_info['file']}")
+                return None
+
+
+            # Drop rows where date conversion failed
+            df_raw.dropna(subset=['Date'], inplace=True)
+            df_clean = df_raw[['Date', 'Value']].set_index('Date').dropna(subset=['Value'])
 
             if df_clean.empty:
-                print(f"ERROR: No data found after cleaning raw file: {raw_path}")
+                print(f"ERROR: No valid data found after cleaning raw file: {raw_path}")
                 return None
 
             df_clean.to_csv(clean_file_path)
@@ -155,7 +168,6 @@ Date,Value
 1993-01-01,6000
 """
     df = pd.read_csv(io.StringIO(mock_data), parse_dates=True, index_col='Date')
-    # Rename 'Value' back to the expected column name for plotting
     df = df.rename(columns={'Value': 'Forex_USD_Million'})
     return df
 
@@ -239,7 +251,7 @@ def get_historical_gold_prices():
         {'file': 'historical_gold_inr.csv'},
         create_mock_gold
     )
-    
+
 def get_mcx_copper():
     return load_or_create_data(
         'clean_mcx_copper.csv',
@@ -250,14 +262,14 @@ def get_mcx_copper():
 @st.cache_data # Cache this specific function
 def get_oil_petrol_inr_data():
     """
-    Part 1 function for 2022 Crisis.
-    Loads and cleans MCX Crude Oil, USD/INR, and Petrol data.
+    Part 1 function for 2022 Crisis. Loads and cleans Oil, INR, and Petrol data.
     Handles multiple raw files directly. Bypasses the helper.
     """
     clean_file_path = os.path.join(CLEAN_DATA_DIR, 'clean_oil_petrol_inr.csv')
-    raw_oil_path = os.path.join(RAW_DATA_DIR, 'mcx_oil.csv') # Assumed MCX oil in INR
-    raw_inr_path = os.path.join(RAW_DATA_DIR, 'usd_inr_daily.csv') # For context
-    raw_petrol_path = os.path.join(RAW_DATA_DIR, 'ppac_petrol_delhi.csv') # Assumed PPAC format
+    # Define paths using realistic placeholders for filenames
+    raw_oil_path = os.path.join(RAW_DATA_DIR, 'global_brent_usd_daily.csv') # Assumed Brent USD data
+    raw_inr_path = os.path.join(RAW_DATA_DIR, 'rbi_usd_inr_daily.csv') # Assumed RBI INR data
+    raw_petrol_path = os.path.join(RAW_DATA_DIR, 'ppac_petrol_delhi_daily.csv') # Assumed PPAC format
 
     if os.path.exists(clean_file_path):
         try:
@@ -276,42 +288,40 @@ def get_oil_petrol_inr_data():
         # --- Load and process the raw files ---
         try:
             print(f"Processing raw files: {raw_oil_path}, {raw_inr_path}, {raw_petrol_path}")
-            
-            # 1. Load Oil Data (e.g., MCX Crude Futures in INR)
-            df_oil = pd.read_csv(raw_oil_path) # You need to adapt column names
-            df_oil['Date'] = pd.to_datetime(df_oil['Date']) # Adapt date column name/format
-            df_oil = df_oil.rename(columns={'Close': 'Crude_INR'}) # Adapt Close column name
-            df_oil = df_oil[['Date', 'Crude_INR']]
 
-            # 2. Load INR Data (e.g., from RBI)
+            # 1. Load Brent Oil Data (USD)
+            df_oil = pd.read_csv(raw_oil_path) # Adapt column names
+            df_oil['Date'] = pd.to_datetime(df_oil['Date'], errors='coerce') # Adapt date column/format
+            df_oil = df_oil.rename(columns={'Price': 'Brent_USD'}) # Adapt Price column name
+            df_oil = df_oil[['Date', 'Brent_USD']].dropna(subset=['Date'])
+
+            # 2. Load INR Data (USD to INR rate)
             df_inr = pd.read_csv(raw_inr_path) # Adapt column names
-            df_inr['Date'] = pd.to_datetime(df_inr['Date']) # Adapt date column name/format
+            df_inr['Date'] = pd.to_datetime(df_inr['Date'], errors='coerce') # Adapt date column/format
             df_inr = df_inr.rename(columns={'Value': 'USD_INR'}) # Adapt Value column name
-            df_inr = df_inr[['Date', 'USD_INR']]
+            df_inr = df_inr[['Date', 'USD_INR']].dropna(subset=['Date'])
 
-            # 3. Load Petrol Data (e.g., from PPAC)
+            # 3. Load Petrol Data (INR per Litre)
             df_petrol = pd.read_csv(raw_petrol_path) # Adapt column names
-            df_petrol['Date'] = pd.to_datetime(df_petrol['Date']) # Adapt date column name/format
+            df_petrol['Date'] = pd.to_datetime(df_petrol['Date'], errors='coerce') # Adapt date column/format
             df_petrol = df_petrol.rename(columns={'Delhi_Price': 'Petrol_Delhi'}) # Adapt Price column name
-            df_petrol = df_petrol[['Date', 'Petrol_Delhi']]
-            
+            df_petrol = df_petrol[['Date', 'Petrol_Delhi']].dropna(subset=['Date'])
+
             # 4. Merge them all on the date
             df_merged = pd.merge(df_oil, df_inr, on='Date', how='inner')
             df_merged = pd.merge(df_merged, df_petrol, on='Date', how='inner')
-            
-            # --- Optional: If your MCX oil is in INR but represents USD barrel price ---
-            # --- you might need to calculate Brent_in_INR differently ---
-            # --- For this example, we assume MCX data is not directly Brent ---
-            # --- We will use the mock function's logic for Brent_in_INR calculation ---
-            # --- If you get real Brent USD data, merge it and calculate here ---
-            # --- For now, just pass through Crude_INR from MCX ---
-            df_merged['Brent_in_INR'] = df_merged['Crude_INR'] # Placeholder - Adapt if needed!
 
-            # 5. Set index and save
-            df_clean = df_merged.set_index('Date').dropna()
-            
+            # --- Calculate Brent in INR ---
+            df_merged['Brent_USD'] = pd.to_numeric(df_merged['Brent_USD'], errors='coerce')
+            df_merged['USD_INR'] = pd.to_numeric(df_merged['USD_INR'], errors='coerce')
+            df_merged['Brent_in_INR'] = df_merged['Brent_USD'] * df_merged['USD_INR']
+
+            # 5. Set index, clean numeric columns and save
+            df_merged['Petrol_Delhi'] = pd.to_numeric(df_merged['Petrol_Delhi'], errors='coerce')
+            df_clean = df_merged.set_index('Date').dropna() # Drop rows with any NaN
+
             if df_clean.empty:
-                print("ERROR: No matching dates found between Oil, INR, and Petrol files. Check your files.")
+                print("ERROR: No matching dates found or data invalid after merging Oil, INR, and Petrol files.")
                 return None
 
             df_clean.to_csv(clean_file_path)
@@ -330,7 +340,7 @@ def get_oil_petrol_inr_data():
                 print(f"Clean mock data saved to {clean_file_path}")
             return df_mock
         except EmptyDataError as e:
-            print(f"ERROR: A raw file is empty: {e.filename}. Falling back to mock data.")
+            print(f"ERROR: A raw file is empty: {getattr(e, 'filename', 'Unknown')}. Falling back to mock data.")
             df_mock = create_mock_oil_petrol_inr() # Fallback to mock
             if df_mock is not None:
                 df_mock.to_csv(clean_file_path)
@@ -357,13 +367,18 @@ def get_agri_wpi():
 # --- PART 2: ANALYSIS & VISUALIZATION FUNCTIONS ---
 # ==============================================================================
 
-@st.cache_data  # Cache the plot generation
+@st.cache_data
 def plot_1991_bop_crisis():
     print("Generating 1991 BoP Crisis plot...")
     df = get_forex_reserves()
 
     if df is None or 'Forex_USD_Million' not in df.columns:
         return create_error_fig("Forex data not found or column mismatch.")
+
+    # Ensure index is datetime before slicing
+    if not pd.api.types.is_datetime64_any_dtype(df.index):
+        df.index = pd.to_datetime(df.index, errors='coerce')
+        df = df.dropna(subset=[df.index.name]) # Use index name if available
 
     df_crisis = df.loc['1988-01-01':'1993-01-01']
     if df_crisis.empty:
@@ -374,14 +389,24 @@ def plot_1991_bop_crisis():
 
     crisis_point = pd.to_datetime('1990-08-01')
     low_point = pd.to_datetime('1991-06-01')
-    ax.axvline(crisis_point, color='black', linestyle='--', label='1990 Gulf War (Oil Spike)')
-    ax.axvline(low_point, color='gold', linestyle='--', label='1991 India Pledges Gold')
+
+    # Convert Timestamps to Matplotlib format
+    crisis_point_num = mdates.date2num(crisis_point)
+    low_point_num = mdates.date2num(low_point)
+
+    ax.axvline(crisis_point_num, color='black', linestyle='--', label='1990 Gulf War (Oil Spike)')
+    ax.axvline(low_point_num, color='gold', linestyle='--', label='1991 India Pledges Gold')
 
     ax.set_title("The 1991 Balance of Payments Crisis", fontsize=18)
     ax.set_xlabel("Year", fontsize=12)
     ax.set_ylabel("Foreign Exchange Reserves (in Million USD)", fontsize=12)
     ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('${x:,.0f}M'))
     ax.legend()
+
+    # Format x-axis for dates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+
     plt.tight_layout()
     return fig
 
@@ -396,41 +421,50 @@ def plot_2008_financial_crisis():
     if df_copper is None or 'Price_per_kg_INR' not in df_copper.columns:
         return create_error_fig("Copper data not found or column mismatch.")
 
-    # Align data to common date range before plotting
+    # Ensure indices are datetime
+    if not pd.api.types.is_datetime64_any_dtype(df_gold.index):
+        df_gold.index = pd.to_datetime(df_gold.index, errors='coerce').dropna()
+    if not pd.api.types.is_datetime64_any_dtype(df_copper.index):
+        df_copper.index = pd.to_datetime(df_copper.index, errors='coerce').dropna()
+
     start_date = '2007-01-01'
     end_date = '2011-01-01'
-    idx = pd.date_range(start_date, end_date) # Create a full index
-    
-    # Reindex and forward-fill to align data for plotting, handle potential missing dates
-    df_gold = df_gold.reindex(idx, method='ffill').loc[start_date:end_date]
-    df_copper = df_copper.reindex(idx, method='ffill').loc[start_date:end_date]
-    
-    if df_gold.empty or df_copper.empty:
-         return create_error_fig("No Gold/Copper data for 2007-2011.")
+    # Use intersection of indices to avoid issues with different date ranges
+    common_index = df_gold.index.intersection(df_copper.index)
+    common_index = common_index[(common_index >= start_date) & (common_index <= end_date)]
 
+    if common_index.empty:
+        return create_error_fig("No overlapping Gold/Copper data for 2007-2011.")
+
+    df_gold_plot = df_gold.loc[common_index]
+    df_copper_plot = df_copper.loc[common_index]
 
     fig, ax1 = plt.subplots(figsize=(12, 7))
 
     crisis_point = pd.to_datetime('2008-09-15')
-    ax1.axvline(crisis_point, color='red', linestyle='--', label='2008 Financial Crisis')
+    crisis_point_num = mdates.date2num(crisis_point)
+    ax1.axvline(crisis_point_num, color='red', linestyle='--', label='2008 Financial Crisis')
 
-    # Axis 1: Gold (Safe Haven)
-    sns.lineplot(data=df_gold, x=df_gold.index, y='Price_per_10g_INR', ax=ax1, color='gold', label='Gold (Safe Haven)', marker='.') # Use '.' for potentially daily data
+    # Axis 1: Gold
+    sns.lineplot(data=df_gold_plot, x=df_gold_plot.index, y='Price_per_10g_INR', ax=ax1, color='gold', label='Gold (Safe Haven)', marker='.')
     ax1.set_xlabel("Date", fontsize=12)
     ax1.set_ylabel("Gold Price (₹ per 10g)", fontsize=12, color='gold')
     ax1.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
 
-    # Axis 2: Copper (Industrial)
+    # Axis 2: Copper
     ax2 = ax1.twinx()
-    sns.lineplot(data=df_copper, x=df_copper.index, y='Price_per_kg_INR', ax=ax2, color='brown', label='Copper (Industrial)', marker='.') # Use '.'
+    sns.lineplot(data=df_copper_plot, x=df_copper_plot.index, y='Price_per_kg_INR', ax=ax2, color='brown', label='Copper (Industrial)', marker='.')
     ax2.set_ylabel("Copper Price (₹ per kg)", fontsize=12, color='brown')
     ax2.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
 
     fig.suptitle("2008 Crisis: Gold (Safe Haven) vs. Copper (Industrial)", fontsize=18)
-    # Combine legends manually for twin axes
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', bbox_to_anchor=(0.1, 0.9))
+
+    # Format x-axis for dates
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.setp(ax1.get_xticklabels(), rotation=30, ha='right')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig
@@ -446,34 +480,43 @@ def plot_2016_demonetisation_shock():
     if df_gold is None or 'Price_per_10g_INR' not in df_gold.columns:
         return create_error_fig("Gold data not found or column mismatch.")
 
-    df_agri = df_agri.loc['2016-08-01':'2017-02-01']
-    df_gold = df_gold.loc['2016-10-01':'2017-01-01'] # Adjust gold range slightly for plotting
+    # Ensure indices are datetime
+    if not pd.api.types.is_datetime64_any_dtype(df_agri.index):
+        df_agri.index = pd.to_datetime(df_agri.index, errors='coerce').dropna()
+    if not pd.api.types.is_datetime64_any_dtype(df_gold.index):
+        df_gold.index = pd.to_datetime(df_gold.index, errors='coerce').dropna()
 
-    if df_agri.empty or df_gold.empty:
+    df_agri_plot = df_agri.loc['2016-08-01':'2017-02-01']
+    df_gold_plot = df_gold.loc['2016-10-01':'2017-01-01']
+
+    if df_agri_plot.empty or df_gold_plot.empty:
          return create_error_fig("No Agri/Gold data for 2016-2017.")
 
     fig, ax1 = plt.subplots(figsize=(12, 7))
 
     crisis_point = pd.to_datetime('2016-11-08')
-    ax1.axvline(crisis_point, color='red', linestyle='--', label='Demonetisation (Nov 8)')
+    crisis_point_num = mdates.date2num(crisis_point)
+    ax1.axvline(crisis_point_num, color='red', linestyle='--', label='Demonetisation (Nov 8)')
 
-    # Axis 1: Agri WPI (Cash Market)
-    sns.lineplot(data=df_agri, x=df_agri.index, y='WPI_Vegetables', ax=ax1, color='green', label='Agri WPI (Cash Market)', marker='o')
+    # Axis 1: Agri WPI
+    sns.lineplot(data=df_agri_plot, x=df_agri_plot.index, y='WPI_Vegetables', ax=ax1, color='green', label='Agri WPI (Cash Market)', marker='o')
     ax1.set_xlabel("Date", fontsize=12)
     ax1.set_ylabel("Vegetable WPI (Index)", fontsize=12, color='green')
 
-    # Axis 2: Gold (Store of Value) - Use df_gold which has the correct column name
+    # Axis 2: Gold
     ax2 = ax1.twinx()
-    sns.lineplot(data=df_gold, x=df_gold.index, y='Price_per_10g_INR', ax=ax2, color='gold', label='Gold Price (Store of Value)', marker='s')
+    sns.lineplot(data=df_gold_plot, x=df_gold_plot.index, y='Price_per_10g_INR', ax=ax2, color='gold', label='Gold Price (Store of Value)', marker='s')
     ax2.set_ylabel("Gold Price (₹ per 10g)", fontsize=12, color='gold')
     ax2.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
 
-
     fig.suptitle("2016 Demonetisation: Agri (Liquidity Crash) vs. Gold (Panic Spike)", fontsize=16)
-    # Combine legends manually
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', bbox_to_anchor=(0.1, 0.9))
+
+    # Format x-axis for dates
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.setp(ax1.get_xticklabels(), rotation=30, ha='right')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig
@@ -483,54 +526,53 @@ def plot_2022_oil_shock():
     print("Generating 2022 Oil Shock plot...")
     df = get_oil_petrol_inr_data()
 
-    # Check if essential columns exist after loading
     required_cols = ['Brent_in_INR', 'Petrol_Delhi']
     if df is None or not all(col in df.columns for col in required_cols):
         return create_error_fig("Oil/Petrol data not found or column mismatch (needs 'Brent_in_INR', 'Petrol_Delhi').")
+
+    # Ensure index is datetime
+    if not pd.api.types.is_datetime64_any_dtype(df.index):
+        df.index = pd.to_datetime(df.index, errors='coerce')
+        df = df.dropna(subset=[df.index.name])
 
     df_crisis = df.loc['2021-12-01':'2022-07-01'].copy()
     if df_crisis.empty:
         return create_error_fig("No Oil/Petrol data available for 2021-12 to 2022-07.")
 
-
     # --- Analysis: Rolling Correlation ---
-    window_size = 3 # 3-month rolling window (adjust if data is daily)
-    # Ensure columns are numeric before calculating correlation
+    window_size = 3 # Adjust if data is daily (e.g., 20)
     df_crisis['Brent_in_INR'] = pd.to_numeric(df_crisis['Brent_in_INR'], errors='coerce')
     df_crisis['Petrol_Delhi'] = pd.to_numeric(df_crisis['Petrol_Delhi'], errors='coerce')
-    df_crisis.dropna(subset=['Brent_in_INR', 'Petrol_Delhi'], inplace=True) # Drop rows where conversion failed
+    df_crisis.dropna(subset=['Brent_in_INR', 'Petrol_Delhi'], inplace=True)
 
-    if len(df_crisis) < window_size:
-         print(f"Warning: Not enough data points ({len(df_crisis)}) for rolling correlation window ({window_size}). Skipping correlation plot.")
-         # Plot only the top chart if correlation can't be calculated
-         fig, ax1 = plt.subplots(figsize=(12, 7))
-         correlation_calculated = False
-    else:
-         df_crisis['Correlation'] = df_crisis['Brent_in_INR'].rolling(window_size).corr(df_crisis['Petrol_Delhi'])
+    correlation_calculated = False
+    if len(df_crisis) >= window_size:
+         df_crisis['Correlation'] = df_crisis['Brent_in_INR'].rolling(window_size, min_periods=window_size).corr(df_crisis['Petrol_Delhi'])
          fig, (ax1, ax3) = plt.subplots(nrows=2, figsize=(12, 10), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
          correlation_calculated = True
+    else:
+         print(f"Warning: Not enough data points ({len(df_crisis)}) for rolling correlation window ({window_size}). Skipping correlation plot.")
+         fig, ax1 = plt.subplots(figsize=(12, 7)) # Only create top plot axes
+
 
     crisis_point = pd.to_datetime('2022-02-24')
-    ax1.axvline(crisis_point, color='red', linestyle='--', label='Russia-Ukraine War')
+    crisis_point_num = mdates.date2num(crisis_point) # Convert for axvline
+    ax1.axvline(crisis_point_num, color='red', linestyle='--', label='Russia-Ukraine War')
 
     # --- Top Plot (Prices) ---
     sns.lineplot(data=df_crisis, x=df_crisis.index, y='Brent_in_INR', ax=ax1, color='green', label='Brent Crude (in ₹)', marker='.')
     ax1.set_ylabel("Crude Price (₹ per Barrel)", fontsize=12, color='green')
     ax1.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
 
-
     ax2 = ax1.twinx()
     sns.lineplot(data=df_crisis, x=df_crisis.index, y='Petrol_Delhi', ax=ax2, color='purple', label='Retail Petrol, Delhi (in ₹)', marker='.')
     ax2.set_ylabel("Petrol Price (₹ per Litre)", fontsize=12, color='purple')
     ax2.yaxis.set_major_formatter(mticker.StrMethodFormatter('₹{x:,.0f}'))
 
-
     fig.suptitle("2022 Oil Shock: Global Price vs. Retail Price", fontsize=18)
-    # Combine legends
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', bbox_to_anchor=(0.1, 0.9))
-
 
     # --- Bottom Plot (Correlation) ---
     if correlation_calculated:
@@ -541,7 +583,17 @@ def plot_2022_oil_shock():
         ax3.axhline(0, color='grey', linestyle=':')
         ax3.axhline(-1, color='grey', linestyle=':')
         ax3.legend()
-        ax3.set_xlabel("Date", fontsize=12) # Add x-label to bottom plot
+        ax3.set_xlabel("Date", fontsize=12) # Add x-label only to the bottom-most plot
+
+        # Format x-axis for dates on the bottom plot (since sharex=True)
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.setp(ax3.get_xticklabels(), rotation=45, ha='right')
+    else:
+        # Format x-axis on the top plot if no correlation plot
+        ax1.set_xlabel("Date", fontsize=12)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.setp(ax1.get_xticklabels(), rotation=45, ha='right')
+
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig
@@ -573,7 +625,7 @@ prices has fundamentally changed, splitting India's modern history into two dist
 """)
 
 # --- Run Setup ---
-setup_directories()
+setup_directories() # Ensure directories exist
 
 # --- 3. Main Page Navigation (Using Tabs) ---
 tab1, tab2, tab3 = st.tabs([
@@ -641,12 +693,13 @@ with tab2:
     This was the ultimate test of India's "Market Era."
 
     **Analysis (Top Chart):** This chart shows the **dual shock**. The global price
-    of crude oil (in ₹, Green Line) spiked. Because retail petrol prices (Purple Line)
-    are now largely de-regulated, they followed the global price upwards, passing the cost
-    directly to the consumer.
+    of crude oil (represented here by Brent, converted to ₹, Green Line) spiked.
+    Because retail petrol prices (Purple Line) are now largely market-linked,
+    they followed the global price upwards, passing the cost directly to the consumer.
 
     **Analysis (Bottom Chart):** This chart proves the link statistically. It shows
-    the 3-period **rolling correlation** between the crude price (in ₹) and the retail petrol price.
+    the calculated **rolling correlation** between the crude price (in ₹) and the retail petrol price
+    over a defined period (e.g., 3 months or ~60 trading days if using daily data).
     Notice how the correlation approaches +1.0 during the peak? This means that for this period,
     the price at the pump in Delhi moved in *strong lock-step* with the global market pressures.
     """)
@@ -722,4 +775,4 @@ if st.sidebar.checkbox("Show Sample Data (from Mock Files)"):
         st.sidebar.error(f"Error loading Agri WPI sample: {e}")
 
 # --- Setup Directories on first run (call at the end) ---
-# setup_directories() # Moved setup call earlier before data loading starts
+# Moved setup call earlier before data loading starts
